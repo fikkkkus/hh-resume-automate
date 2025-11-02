@@ -1,6 +1,7 @@
 package com.github.s3rgeym.hh_resume_automate.worker
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import androidx.work.WorkerParameters
 import com.github.s3rgeym.hh_resume_automate.api.ApiClient
@@ -65,7 +66,7 @@ class VacancyApplyWorker(
     }
 
     private suspend fun applySimilarVacancies() {
-        for (page in 0 until 20) {
+        for (page in 0 until 100) {
             if (page > 1) {
                 val pageDelayMillis = Random.nextLong(1000, 3000)
                 Log.d(TAG, "Delaying for $pageDelayMillis ms before fetching next page.")
@@ -81,8 +82,17 @@ class VacancyApplyWorker(
             try {
                 response = if (!filterUrl.isNullOrEmpty()) {
                     showNotification("🌐 URL фильтр активен")
+
                     val fullUrl = if (filterUrl.startsWith("http")) filterUrl else "https://hh.ru/search/vacancy?$filterUrl"
-                    client.apiFromFullUrl(fullUrl)
+
+                    // ✅ добавляем постраничные параметры
+                    val uri = fullUrl.toUri()
+                    val builder = uri.buildUpon()
+                    builder.appendQueryParameter("page", page.toString())
+                    builder.appendQueryParameter("per_page", "100")
+                    val pagedUrl = builder.build().toString()
+
+                    client.apiFromFullUrl(pagedUrl)
                 } else {
                     client.api("GET", "/resumes/$resumeId/similar_vacancies", requestParams)
                 }
