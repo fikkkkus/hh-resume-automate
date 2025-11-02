@@ -235,6 +235,29 @@ fun HomeScreen(
 
     Spacer(modifier = Modifier.height(24.dp))
 
+    val applyTime by viewModel.applyTime.collectAsState()
+    var showTimePicker by remember { mutableStateOf(false) }
+
+    if (showTimePicker) {
+      android.app.TimePickerDialog(
+        context,
+        { _, hour, minute -> viewModel.updateApplyTime(hour, minute) },
+        applyTime.first,
+        applyTime.second,
+        true
+      ).show()
+      showTimePicker = false
+    }
+
+    OutlinedButton(
+      onClick = { showTimePicker = true },
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Text("⏰ Время отклика: %02d:%02d".format(applyTime.first, applyTime.second))
+    }
+
+    Spacer(modifier = Modifier.height(24.dp))
+
     val vacancyApplyButtonText = if (isVacancyApplyRunning) "Остановить рассылку" else "Начать рассылку"
     Button(
       onClick = {

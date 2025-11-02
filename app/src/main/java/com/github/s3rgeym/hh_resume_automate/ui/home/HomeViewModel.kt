@@ -72,6 +72,12 @@ class HomeViewModel(
   private val _filterUrl = MutableStateFlow("")
   val filterUrl: StateFlow<String> = _filterUrl.asStateFlow()
 
+  private val SHARED_PREFS_APPLY_HOUR = "apply_hour"
+  private val SHARED_PREFS_APPLY_MINUTE = "apply_minute"
+
+  private val _applyTime = MutableStateFlow<Pair<Int, Int>>(8 to 0) // по умолчанию 8:00
+  val applyTime: StateFlow<Pair<Int, Int>> = _applyTime.asStateFlow()
+
   init {
     viewModelScope.launch {
       withContext(Dispatchers.IO) {
@@ -80,9 +86,23 @@ class HomeViewModel(
         _coverLetter.value = sharedPrefs.getString(SHARED_PREFS_COVER_LETTER, DEFAULT_COVER_LETTER) ?: DEFAULT_COVER_LETTER
         _searchQuery.value = sharedPrefs.getString(SHARED_PREFS_SEARCH_QUERY, "") ?: ""
         _filterUrl.value = sharedPrefs.getString(SHARED_PREFS_FILTER_URL, "") ?: ""
+        _applyTime.value = (
+                sharedPrefs.getInt(SHARED_PREFS_APPLY_HOUR, 8) to
+                        sharedPrefs.getInt(SHARED_PREFS_APPLY_MINUTE, 0)
+                )
       }
       loadResumes()
       observeWorkerStates()
+    }
+  }
+
+  fun updateApplyTime(hour: Int, minute: Int) {
+    _applyTime.value = hour to minute
+    viewModelScope.launch(Dispatchers.IO) {
+      sharedPrefs.edit()
+        .putInt(SHARED_PREFS_APPLY_HOUR, hour)
+        .putInt(SHARED_PREFS_APPLY_MINUTE, minute)
+        .apply()
     }
   }
 
@@ -250,6 +270,8 @@ class HomeViewModel(
     coverLetter: String,
     alwaysAttach: Boolean
   ) {
+    val (hour, minute) = _applyTime.value
+
     val inputData = workDataOf(
       "resume_id" to resumeId,
       "query" to query,
@@ -261,7 +283,18 @@ class HomeViewModel(
       .setRequiredNetworkType(NetworkType.CONNECTED)
       .build()
 
+    // вычисляем задержку до ближайшего нужного времени
+    val now = java.util.Calendar.getInstance()
+    val target = java.util.Calendar.getInstance().apply {
+      set(java.util.Calendar.HOUR_OF_DAY, hour)
+      set(java.util.Calendar.MINUTE, minute)
+      set(java.util.Calendar.SECOND, 0)
+      if (before(now)) add(java.util.Calendar.DAY_OF_YEAR, 1)
+    }
+    val delayMillis = target.timeInMillis - now.timeInMillis
+
     val oneTimeRequest = OneTimeWorkRequestBuilder<VacancyApplyWorker>()
+      .setInitialDelay(delayMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
       .setInputData(inputData)
       .setConstraints(constraints)
       .build()
@@ -279,6 +312,8 @@ class HomeViewModel(
     coverLetter: String,
     alwaysAttach: Boolean
   ) {
+    val (hour, minute) = _applyTime.value
+
     val inputData = workDataOf(
       "resume_id" to resumeId,
       "query" to query,
@@ -290,20 +325,32 @@ class HomeViewModel(
       .setRequiredNetworkType(NetworkType.CONNECTED)
       .build()
 
-    val vacancyApplyRequest = PeriodicWorkRequestBuilder<VacancyApplyWorker>(
-      24, TimeUnit.HOURS,
-      15, TimeUnit.MINUTES
+    // вычисляем задержку до ближайшего нужного времени
+    val now = java.util.Calendar.getInstance()
+    val target = java.util.Calendar.getInstance().apply {
+      set(java.util.Calendar.HOUR_OF_DAY, hour)
+      set(java.util.Calendar.MINUTE, minute)
+      set(java.util.Calendar.SECOND, 0)
+      if (before(now)) add(java.util.Calendar.DAY_OF_YEAR, 1)
+    }
+    val delayMillis = target.timeInMillis - now.timeInMillis
+
+    val vacancyApplyRequest = androidx.work.PeriodicWorkRequestBuilder<VacancyApplyWorker>(
+      24, java.util.concurrent.TimeUnit.HOURS,
+      15, java.util.concurrent.TimeUnit.MINUTES
     )
+      .setInitialDelay(delayMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
       .setInputData(inputData)
       .setConstraints(constraints)
       .build()
 
-    WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-      VACANCY_APPLY_PERIODIC_WORK_NAME,
-      ExistingPeriodicWorkPolicy.UPDATE,
+    androidx.work.WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+      "vacancy_apply_periodic_work",
+      androidx.work.ExistingPeriodicWorkPolicy.UPDATE,
       vacancyApplyRequest
     )
   }
+
 
   private fun enqueueResumeUpdateOneTimeWork(resumeId: String) {
     val inputData = workDataOf(
