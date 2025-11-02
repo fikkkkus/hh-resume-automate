@@ -68,6 +68,10 @@ class HomeViewModel(
   private val _isResumeUpdateRunning = MutableStateFlow(false)
   val isResumeUpdateRunning: StateFlow<Boolean> = _isResumeUpdateRunning.asStateFlow()
 
+  private val SHARED_PREFS_FILTER_URL = "filter_url"
+  private val _filterUrl = MutableStateFlow("")
+  val filterUrl: StateFlow<String> = _filterUrl.asStateFlow()
+
   init {
     viewModelScope.launch {
       withContext(Dispatchers.IO) {
@@ -75,9 +79,17 @@ class HomeViewModel(
         _alwaysAttachCoverLetter.value = sharedPrefs.getBoolean(SHARED_PREFS_ALWAYS_ATTACH_COVER_LETTER, false)
         _coverLetter.value = sharedPrefs.getString(SHARED_PREFS_COVER_LETTER, DEFAULT_COVER_LETTER) ?: DEFAULT_COVER_LETTER
         _searchQuery.value = sharedPrefs.getString(SHARED_PREFS_SEARCH_QUERY, "") ?: ""
+        _filterUrl.value = sharedPrefs.getString(SHARED_PREFS_FILTER_URL, "") ?: ""
       }
       loadResumes()
       observeWorkerStates()
+    }
+  }
+
+  fun updateFilterUrl(url: String) {
+    _filterUrl.value = url
+    viewModelScope.launch(Dispatchers.IO) {
+      sharedPrefs.edit().putString(SHARED_PREFS_FILTER_URL, url).apply()
     }
   }
 

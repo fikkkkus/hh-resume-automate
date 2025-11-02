@@ -8,6 +8,7 @@ import com.github.s3rgeym.hh_resume_automate.api.ApiException
 import com.github.s3rgeym.hh_resume_automate.api.LimitExceededException
 import kotlinx.coroutines.delay
 import kotlin.random.Random
+import androidx.core.net.toUri
 
 class VacancyApplyWorker(
     context: Context,
@@ -26,6 +27,8 @@ class VacancyApplyWorker(
 
     private var firstName: String = ""
     private var lastName: String = ""
+
+    private val filterUrl = sharedPrefs.getString("filter_url", null)
 
     override suspend fun doWork(): Result {
         if (resumeId.isNullOrEmpty()) {
@@ -76,7 +79,14 @@ class VacancyApplyWorker(
 
             val response: Map<String, Any?>
             try {
-                response = client.api("GET", "/resumes/$resumeId/similar_vacancies", requestParams)
+                response = if (!filterUrl.isNullOrEmpty()) {
+                    showNotification("🌐 URL фильтр активен")
+                    val fullUrl = if (filterUrl.startsWith("http")) filterUrl else "https://hh.ru/search/vacancy?$filterUrl"
+                    client.apiFromFullUrl(fullUrl)
+                } else {
+                    client.api("GET", "/resumes/$resumeId/similar_vacancies", requestParams)
+                }
+
             } catch (e: ApiException) {
                 // Если произошла ошибка API при получении вакансий, нотификация уже будет показана
                 // в doWork, если это общая ошибка. Если это специфическая API ошибка здесь,
@@ -129,14 +139,21 @@ class VacancyApplyWorker(
                                 client.api("GET", "/employers/$employerId") // Просмотр аккаунта работодателя
                             }
                         }
-                    } catch (e: ApiException) {
+                    }
+                    catch (e: LimitExceededException) {
+                        // ⚠️ Это конкретный случай превышения лимита рассылки
+                        val message = "⚠️ Достигнут лимит откликов на сегодня!"
+                        Log.w(TAG, message, e)
+                        showNotification(message)
+                        continue  // прекращаем выполнение applySimilarVacancies
+                    }
+                    catch (e: ApiException) {
                         val errorMessage = "Ошибка API при просмотре '$vacancyName': ${e.message}"
                         Log.w(TAG, errorMessage, e)
                         showNotification("❌ $errorMessage")
                         continue
                     }
                 }
-
 
                 val payload = mutableMapOf<String, Any>(
                     "resume_id" to resumeId!!,

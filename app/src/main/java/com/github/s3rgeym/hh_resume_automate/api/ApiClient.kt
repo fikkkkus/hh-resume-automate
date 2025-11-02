@@ -83,6 +83,48 @@ class ApiClient(
         params: Map<String, Any?>? = null
     ): Map<String, Any?> = apiRequest(method, apiUrl, endpoint, params)
 
+    suspend fun apiFromFullUrl(fullUrl: String): Map<String, Any?> {
+        val uri = android.net.Uri.parse(fullUrl)
+        val queryParams = uri.queryParameterNames.associateWith { key ->
+            uri.getQueryParameter(key).orEmpty()
+        }
+
+        // Убираем возможные параметры с пустыми значениями — HH не любит пустые query
+        val cleanParams = queryParams.filterValues { it.isNotEmpty() }.toMutableMap()
+
+        // Подставляем номер страницы и размер выборки
+        cleanParams["page"] = cleanParams["page"] ?: "0"
+        cleanParams["per_page"] = cleanParams["per_page"] ?: "100"
+
+        // Формируем корректный URL для api.hh.ru
+        val baseUrl = "https://api.hh.ru"
+        val endpoint = "/vacancies"
+
+        val requestUrl = buildUrl(baseUrl, endpoint, cleanParams)
+
+        val request = okhttp3.Request.Builder()
+            .url(requestUrl)
+            .headers(defaultHeaders().newBuilder()
+                .add("Authorization", "Bearer $accessToken")
+                .build()
+            )
+            .get()
+            .build()
+
+        val response = client.newCall(request).execute()
+        val bodyStr = response.body?.string()?.trim() ?: throw IOException("Empty response")
+        if (!response.isSuccessful) {
+            System.err.println("⚠️ API Error ${response.code}: $bodyStr")
+            throw BadRequestException(mapOf("error" to bodyStr))
+        }
+
+        if (bodyStr.startsWith("<!DOCTYPE")) {
+            throw IOException("HTML received instead of JSON (Bad URL or not API domain)")
+        }
+
+        return JSONObject(bodyStr).toMap()
+    }
+
     fun getAuthorizeUrl(redirectUri: String = "", state: String = "", scope: String = ""): String {
         val params = mapOf(
             "client_id" to clientId,

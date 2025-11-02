@@ -81,6 +81,8 @@ fun HomeScreen(
     var showSearchQueryHelpDialog by remember { mutableStateOf(false) }
     var showCoverLetterHelpDialog by remember { mutableStateOf(false) }
 
+    val filterUrl by viewModel.filterUrl.collectAsState()
+
     Box(modifier = Modifier.fillMaxWidth()) {
       OutlinedButton(
         onClick = { dropdownExpanded = true },
@@ -134,6 +136,16 @@ fun HomeScreen(
         }
       }
     )
+
+    OutlinedTextField(
+      value = filterUrl,
+      onValueChange = viewModel::updateFilterUrl,
+      label = { Text("URL фильтра HH.ru") },
+      placeholder = { Text("https://hh.ru/search/vacancy?...") },
+      singleLine = true,
+      modifier = Modifier.fillMaxWidth()
+    )
+
     if (showSearchQueryHelpDialog) {
       AlertDialog(
         onDismissRequest = { showSearchQueryHelpDialog = false },
