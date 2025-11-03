@@ -270,8 +270,6 @@ class HomeViewModel(
     coverLetter: String,
     alwaysAttach: Boolean
   ) {
-    val (hour, minute) = _applyTime.value
-
     val inputData = workDataOf(
       "resume_id" to resumeId,
       "query" to query,
@@ -283,18 +281,8 @@ class HomeViewModel(
       .setRequiredNetworkType(NetworkType.CONNECTED)
       .build()
 
-    // вычисляем задержку до ближайшего нужного времени
-    val now = java.util.Calendar.getInstance()
-    val target = java.util.Calendar.getInstance().apply {
-      set(java.util.Calendar.HOUR_OF_DAY, hour)
-      set(java.util.Calendar.MINUTE, minute)
-      set(java.util.Calendar.SECOND, 0)
-      if (before(now)) add(java.util.Calendar.DAY_OF_YEAR, 1)
-    }
-    val delayMillis = target.timeInMillis - now.timeInMillis
-
     val oneTimeRequest = OneTimeWorkRequestBuilder<VacancyApplyWorker>()
-      .setInitialDelay(delayMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+      .setInitialDelay(0, TimeUnit.MILLISECONDS) // сразу
       .setInputData(inputData)
       .setConstraints(constraints)
       .build()

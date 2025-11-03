@@ -2,6 +2,7 @@ package com.github.s3rgeym.hh_resume_automate.api
 
 import android.content.SharedPreferences
 import android.net.Uri
+import android.util.Log
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.Interceptor
@@ -10,6 +11,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
@@ -83,38 +85,113 @@ class ApiClient(
         params: Map<String, Any?>? = null
     ): Map<String, Any?> = apiRequest(method, apiUrl, endpoint, params)
 
-    suspend fun apiFromFullUrl(fullUrl: String): Map<String, Any?> {
+    suspend fun apiFromFullUrl(
+        fullUrl: String
+    ): Map<String, Any?> {
+        return try {
+            apiFromFullUrlGo(fullUrl)
+        } catch (e: ForbiddenException) {
+            if (isAccessExpired && refreshToken != null) {
+                refreshAccessToken()
+                apiFromFullUrlGo(fullUrl)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    suspend fun apiFromFullUrlGo(fullUrl: String): Map<String, Any?> {
+        val TAG = "ApiClient"
         val uri = android.net.Uri.parse(fullUrl)
-        val queryParams = uri.queryParameterNames.associateWith { key ->
-            uri.getQueryParameter(key).orEmpty()
+
+        // Собираем ВСЕ параметры, включая повторяющиеся ключи
+        val queryParams = mutableMapOf<String, MutableList<String>>()
+        uri.queryParameterNames.forEach { key ->
+            val values = uri.getQueryParameters(key)
+            if (!values.isNullOrEmpty()) {
+                queryParams.getOrPut(key) { mutableListOf() }.addAll(values.filter { it.isNotEmpty() })
+            }
         }
 
-        // Убираем возможные параметры с пустыми значениями — HH не любит пустые query
-        val cleanParams = queryParams.filterValues { it.isNotEmpty() }.toMutableMap()
+        // ✅ Добавляем дефолты
+        queryParams.getOrPut("page") { mutableListOf("0") }
+        queryParams.getOrPut("per_page") { mutableListOf("100") }
 
-        // Подставляем номер страницы и размер выборки
-        cleanParams["page"] = cleanParams["page"] ?: "0"
-        cleanParams["per_page"] = cleanParams["per_page"] ?: "100"
+        // Формируем финальный query string вручную
+        val queryString = queryParams.flatMap { (key, values) ->
+            values.map { value ->
+                // 👇 Ключевая правка — кодируем, но превращаем %20 обратно в "+"
+                val encoded = URLEncoder.encode(value, "UTF-8")
+                    .replace("%2B", "+")     // если в тексте был плюс
+                    .replace("%20", "+")     // hh.ru ожидает пробел как "+"
+                "$key=$encoded"
+            }
+        }.joinToString("&")
 
-        // Формируем корректный URL для api.hh.ru
-        val baseUrl = "https://api.hh.ru"
-        val endpoint = "/vacancies"
+        val requestUrl = "https://api.hh.ru/vacancies?$queryString"
 
-        val requestUrl = buildUrl(baseUrl, endpoint, cleanParams)
-
-        val request = okhttp3.Request.Builder()
+        // --- Собираем запрос ---
+        val request = Request.Builder()
             .url(requestUrl)
-            .headers(defaultHeaders().newBuilder()
-                .add("Authorization", "Bearer $accessToken")
-                .build()
-            )
+            .headers(defaultHeaders())
+            .apply {
+                accessToken?.let {
+                    addHeader("Authorization", "Bearer $it")
+                }
+            }
             .get()
             .build()
 
+        val start = System.currentTimeMillis()
         val response = client.newCall(request).execute()
-        val bodyStr = response.body?.string()?.trim() ?: throw IOException("Empty response")
+        val duration = System.currentTimeMillis() - start
+
+        // --- ЛОГИРУЕМ ЗАПРОС ---
+        Log.d(TAG, "========================================")
+        Log.d(TAG, "📤 REQUEST: ${request.method} ${request.url}")
+
+        Log.d(TAG, "--- Headers ---")
+        request.headers.forEach { (name, value) ->
+            Log.d(TAG, "$name: $value")
+        }
+
+        request.body?.let { body ->
+            val buffer = okio.Buffer()
+            body.writeTo(buffer)
+            val reqBody = buffer.readUtf8()
+            Log.d(TAG, "--- Body (${reqBody.length} chars) ---")
+            Log.d(TAG, reqBody.take(5000) + if (reqBody.length > 5000) "… [trimmed]" else "")
+        }
+
+        // --- cURL для Postman ---
+        val curl = buildString {
+            append("curl -X ${request.method} '${request.url}'")
+            request.headers.forEach { (name, value) ->
+                append(" -H \"$name: $value\"")
+            }
+            request.body?.let { body ->
+                val buffer = okio.Buffer()
+                body.writeTo(buffer)
+                val reqBody = buffer.readUtf8()
+                append(" --data '${reqBody.replace("'", "\\'")}'")
+            }
+        }
+        Log.d(TAG, "🐚 cURL:\n$curl")
+
+        // --- ЛОГИРУЕМ ОТВЕТ ---
+        Log.d(TAG, "========================================")
+        Log.d(TAG, "📥 RESPONSE (${duration} ms): ${response.code}")
+        response.headers.forEach { (name, value) ->
+            Log.d(TAG, "$name: $value")
+        }
+
+        val bodyStr = response.body?.string()?.trim().orEmpty()
+        Log.d(TAG, "--- Body (${bodyStr.length} chars) ---")
+        Log.d(TAG, bodyStr.take(8000) + if (bodyStr.length > 8000) "… [trimmed]" else "")
+        Log.d(TAG, "========================================")
+
+        // --- Проверки и возврат ---
         if (!response.isSuccessful) {
-            System.err.println("⚠️ API Error ${response.code}: $bodyStr")
             throw BadRequestException(mapOf("error" to bodyStr))
         }
 
